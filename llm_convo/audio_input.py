@@ -7,18 +7,27 @@ import logging
 
 from pydub import AudioSegment
 import speech_recognition as sr
-import whisper
-
+#import whisper
+from datasets import load_dataset
+from transformers import WhisperProcessor, WhisperForConditionalGeneration
+import soundfile as sf
 
 @functools.cache
 def get_whisper_model(size: str = "large"):
     logging.info(f"Loading whisper {size}")
-    return whisper.load_model(size)
+    model = WhisperForConditionalGeneration.from_pretrained("pierreguillou/whisper-medium-french")
+    return model
+    # return whisper.load_model(size)
 
+@functools.cache
+def get_whisper_processor():
+    processor = WhisperProcessor.from_pretrained("pierreguillou/whisper-medium-french")#, language="french")
+    return processor
 
 class WhisperMicrophone:
     def __init__(self):
         self.audio_model = get_whisper_model()
+        self.processor = get_whisper_processor()
         self.recognizer = sr.Recognizer()
         self.recognizer.energy_threshold = 500
         self.recognizer.pause_threshold = 0.8
@@ -30,11 +39,19 @@ class WhisperMicrophone:
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = os.path.join(tmp, "mic.wav")
                 audio = self.recognizer.listen(source)
-                data = io.BytesIO(audio.get_wav_data())
-                audio_clip = AudioSegment.from_file(data)
-                audio_clip.export(tmp_path, format="wav")
-                result = self.audio_model.transcribe(tmp_path, language="english")
-            predicted_text = result["text"]
+                data, sample_rate = sf.read(io.BytesIO(audio.get_wav_data()))
+                print(data)
+                #audio_clip = AudioSegment.from_file(data)
+                # audio_clip.export(tmp_path, format="wav")
+                input_features = self.processor(
+                    data, sampling_rate=16000, return_tensors="pt"
+                ).input_features
+                predicted_ids = self.audio_model.generate(input_features)#, language='french')
+                # Decode token ids to text
+                transcription = self.processor.batch_decode(predicted_ids, skip_special_tokens=True)
+                # result = self.audio_model.transcribe(tmp_path, language="english")
+            # predicted_text = result["text"]
+            predicted_text = transcription[0]
         return predicted_text
 
 
@@ -68,7 +85,7 @@ class WhisperTwilioStream:
         self.audio_model = get_whisper_model()
         self.recognizer = sr.Recognizer()
         self.recognizer.energy_threshold = 300
-        self.recognizer.pause_threshold = 2.5
+        self.recognizer.pause_threshold = 1.5
         self.recognizer.dynamic_energy_threshold = False
         self.stream = None
 
